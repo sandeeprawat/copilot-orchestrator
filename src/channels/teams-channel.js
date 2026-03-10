@@ -1,13 +1,36 @@
-// Teams Channel adapter — polls a Teams channel for task messages, posts results back
+// Teams Channel adapter — polls a Teams channel for task messages via Graph API
 import { spawn, execSync } from 'child_process';
+import https from 'https';
 import { BaseChannel } from './base.js';
 import config from '../config.js';
 import logger from '../logger.js';
 
 const COMPONENT = 'TeamsChannel';
-
-// Messages starting with these prefixes are treated as tasks
 const TASK_PREFIXES = ['/task ', '/run ', '/do '];
+
+function getGraphToken() {
+  return execSync(
+    'az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv',
+    { encoding: 'utf-8', timeout: 15_000, windowsHide: true }
+  ).trim();
+}
+
+function graphGet(path, token) {
+  return new Promise((resolve, reject) => {
+    const url = new URL(`https://graph.microsoft.com/v1.0${path}`);
+    const req = https.get(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => { data += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch { resolve(null); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15_000, () => { req.destroy(); reject(new Error('timeout')); });
+  });
+}
 
 export class TeamsChannelAdapter extends BaseChannel {
   constructor(gateway) {
@@ -16,9 +39,10 @@ export class TeamsChannelAdapter extends BaseChannel {
     this.channelId = config.teamsChannelId;
     this.pollIntervalMs = config.teamsChannelPollMs || 15_000;
     this.pollTimer = null;
-    this.lastSeenMessageId = null;
-    this.lastSeenTimestamp = new Date().toISOString();
-    this.pendingTaskMap = new Map(); // taskId → messageId (to reply in thread)
+    this.seenMessageIds = new Set();
+    this.pendingTaskMap = new Map(); // taskId → messageId
+    this.token = null;
+    this.tokenExpiry = 0;
   }
 
   async start() {
@@ -28,16 +52,21 @@ export class TeamsChannelAdapter extends BaseChannel {
     }
 
     this.running = true;
+
+    // Seed seenMessageIds with current messages so we don't process old ones
+    try {
+      await this._refreshToken();
+      const data = await graphGet(
+        `/teams/${this.teamId}/channels/${this.channelId}/messages?$top=10`, this.token
+      );
+      if (data?.value) {
+        for (const msg of data.value) this.seenMessageIds.add(msg.id);
+      }
+    } catch (e) {
+      logger.warn(COMPONENT, `Failed to seed message history: ${e.message}`);
+    }
+
     logger.info(COMPONENT, `Polling Teams channel every ${this.pollIntervalMs / 1000}s`);
-
-    // Post a startup message (non-blocking)
-    this._postToChannel(
-      '<p>🤖 <b>Orchestrator online.</b> Post a message starting with <code>/task</code> to assign work.</p>' +
-      '<p>Example: <code>/task Search for trending AI papers this week and summarize the top 5</code></p>'
-    ).catch(() => {});
-
-    // Start polling
-    this._poll();
     this.pollTimer = setInterval(() => this._poll(), this.pollIntervalMs);
   }
 
@@ -50,49 +79,50 @@ export class TeamsChannelAdapter extends BaseChannel {
     logger.info(COMPONENT, 'Teams channel adapter stopped');
   }
 
+  async _refreshToken() {
+    if (Date.now() < this.tokenExpiry - 60_000) return;
+    this.token = getGraphToken();
+    this.tokenExpiry = Date.now() + 50 * 60_000; // ~50 min
+  }
+
   async _poll() {
     if (!this.running) return;
 
     try {
-      const messages = await this._fetchMessages();
-      if (!messages || messages.length === 0) return;
+      await this._refreshToken();
+      const data = await graphGet(
+        `/teams/${this.teamId}/channels/${this.channelId}/messages?$top=10`, this.token
+      );
 
-      for (const msg of messages) {
-        // Skip system messages and our own messages
-        if (!msg.from?.displayName || !msg.body?.content) continue;
-        if (msg.id === this.lastSeenMessageId) continue;
+      if (!data?.value) return;
 
-        // Extract text from HTML content
+      for (const msg of data.value) {
+        if (this.seenMessageIds.has(msg.id)) continue;
+        this.seenMessageIds.add(msg.id);
+
+        if (!msg.from?.user?.displayName || !msg.body?.content) continue;
+
         const text = this._stripHtml(msg.body.content).trim();
-        if (!text) continue;
-
-        // Check if it's a task
         const taskPrompt = this._extractTaskPrompt(text);
         if (!taskPrompt) continue;
 
-        logger.info(COMPONENT, `Task from ${msg.from.displayName}: "${taskPrompt.slice(0, 80)}..."`);
+        logger.info(COMPONENT, `Task from ${msg.from.user.displayName}: "${taskPrompt.slice(0, 80)}..."`);
 
-        // React with acknowledgement
-        await this._replyToMessage(msg.id,
-          `<p>⏳ Task received from <b>${msg.from.displayName}</b>. Working on it...</p>`
-        );
+        // Reply in thread
+        this._replyToMessage(msg.id,
+          `<p>⏳ Task received from <b>${msg.from.user.displayName}</b>. Working on it...</p>`
+        ).catch(() => {});
 
-        // Submit task
         try {
           const taskId = await this.submitTask({
             prompt: taskPrompt,
-            id: null,
             priority: 3,
             channel: 'teams-channel',
-            metadata: { messageId: msg.id, author: msg.from.displayName },
           });
           this.pendingTaskMap.set(taskId, msg.id);
           logger.info(COMPONENT, `Queued as task ${taskId}`, taskId);
         } catch (e) {
           logger.error(COMPONENT, `Failed to queue task: ${e.message}`);
-          await this._replyToMessage(msg.id,
-            `<p>❌ Failed to queue task: ${e.message}</p>`
-          );
         }
       }
     } catch (e) {
@@ -121,91 +151,6 @@ export class TeamsChannelAdapter extends BaseChannel {
       .trim();
   }
 
-  async _fetchMessages() {
-    // Use copilot to call the Teams MCP
-    return new Promise((resolve) => {
-      const prompt = `List the most recent messages in Teams channel. Use the teams-ListChannelMessages tool with teamId="${this.teamId}" and channelId="${this.channelId}" and top=5. Return ONLY the raw JSON result, nothing else.`;
-
-      const args = ['-p', prompt, '--allow-all', '--autopilot', '-s', '--output-format', 'json'];
-      const proc = spawn(config.copilotBin, args, {
-        cwd: config.ROOT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-        windowsHide: true,
-      });
-
-      let stdout = '';
-      const timer = setTimeout(() => { proc.kill('SIGTERM'); resolve(null); }, 45_000);
-
-      proc.stdout.on('data', (d) => { stdout += d.toString(); });
-
-      proc.on('close', () => {
-        clearTimeout(timer);
-        // Try to parse messages from the output
-        try {
-          const messages = this._parseMessagesFromOutput(stdout);
-          if (messages && messages.length > 0) {
-            // Update lastSeen to newest message
-            this.lastSeenTimestamp = messages[0].createdDateTime || this.lastSeenTimestamp;
-            // Only return messages newer than what we've already processed
-            const newMessages = messages.filter(m =>
-              m.id !== this.lastSeenMessageId &&
-              new Date(m.createdDateTime) > new Date(this.lastSeenTimestamp).getTime() - this.pollIntervalMs
-            );
-            if (newMessages.length > 0) {
-              this.lastSeenMessageId = newMessages[0].id;
-            }
-            resolve(newMessages.reverse()); // oldest first
-          } else {
-            resolve(null);
-          }
-        } catch {
-          resolve(null);
-        }
-      });
-
-      proc.on('error', () => { clearTimeout(timer); resolve(null); });
-    });
-  }
-
-  _parseMessagesFromOutput(raw) {
-    // Look for JSON array of messages in JSONL output
-    const lines = raw.split('\n').filter(Boolean);
-    for (const line of lines) {
-      try {
-        const obj = JSON.parse(line);
-        if (obj.message && typeof obj.message === 'string') {
-          // Try to find message array in the assistant response
-          const msgMatch = obj.message.match(/\[[\s\S]*\]/);
-          if (msgMatch) {
-            return JSON.parse(msgMatch[0]);
-          }
-        }
-      } catch { /* skip */ }
-    }
-    return null;
-  }
-
-  // Post a message to the channel
-  async _postToChannel(htmlContent) {
-    return new Promise((resolve) => {
-      const prompt = `Post this HTML message to a Teams channel. Use teams-PostChannelMessage with teamId="${this.teamId}", channelId="${this.channelId}", contentType="html", and content exactly:\n\n${htmlContent}\n\nDo not modify.`;
-
-      const args = ['-p', prompt, '--allow-all', '--autopilot', '-s', '--output-format', 'json'];
-      const proc = spawn(config.copilotBin, args, {
-        cwd: config.ROOT,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        shell: false,
-        windowsHide: true,
-      });
-
-      const timer = setTimeout(() => { proc.kill('SIGTERM'); resolve(); }, 60_000);
-      proc.on('close', () => { clearTimeout(timer); resolve(); });
-      proc.on('error', () => { clearTimeout(timer); resolve(); });
-    });
-  }
-
-  // Reply to a specific message in the channel (threaded)
   async _replyToMessage(messageId, htmlContent) {
     return new Promise((resolve) => {
       const prompt = `Reply to a message in a Teams channel thread. Use teams-ReplyToChannelMessage with teamId="${this.teamId}", channelId="${this.channelId}", messageId="${messageId}", contentType="html", and content exactly:\n\n${htmlContent}\n\nDo not modify.`;
@@ -224,36 +169,45 @@ export class TeamsChannelAdapter extends BaseChannel {
     });
   }
 
-  // Called when a task completes — post result back to channel thread
-  async onTaskComplete(task, gistLinks = []) {
-    const messageId = this.pendingTaskMap.get(task.id);
+  async onTaskComplete(task) {
+    const messageId = this._findPendingMessageId(task);
     if (!messageId) return;
-    this.pendingTaskMap.delete(task.id);
 
     const lines = [`<p>✅ <b>Task ${task.id} completed</b></p>`];
-
-    if (gistLinks.length > 0) {
-      lines.push('<p>📎 Reports:</p><ul>');
-      for (const link of gistLinks) {
-        lines.push(`<li><a href="${link.url}">${link.name}</a></li>`);
-      }
-      lines.push('</ul>');
-    } else {
-      const preview = (task.result || '').slice(0, 500).replace(/\n/g, '<br>');
-      lines.push(`<p>${preview}</p>`);
-    }
+    const preview = (task.result || '').slice(0, 500).replace(/\n/g, '<br>');
+    lines.push(`<p>${preview}</p>`);
 
     await this._replyToMessage(messageId, lines.join('\n'));
   }
 
   async onTaskFailed(task) {
-    const messageId = this.pendingTaskMap.get(task.id);
+    const messageId = this._findPendingMessageId(task);
     if (!messageId) return;
-    this.pendingTaskMap.delete(task.id);
 
     await this._replyToMessage(messageId,
       `<p>❌ <b>Task ${task.id} failed:</b> ${(task.error || 'Unknown error').slice(0, 300)}</p>`
     );
+  }
+
+  _findPendingMessageId(task) {
+    if (this.pendingTaskMap.has(task.id)) {
+      const id = this.pendingTaskMap.get(task.id);
+      this.pendingTaskMap.delete(task.id);
+      return id;
+    }
+    let parentId = task.parent_task_id;
+    while (parentId) {
+      if (this.pendingTaskMap.has(parentId)) {
+        const id = this.pendingTaskMap.get(parentId);
+        this.pendingTaskMap.delete(parentId);
+        return id;
+      }
+      try {
+        const parentTask = this.gateway.runtime?.getTask(parentId);
+        parentId = parentTask?.parent_task_id || null;
+      } catch { parentId = null; }
+    }
+    return null;
   }
 }
 
