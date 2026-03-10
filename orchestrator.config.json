@@ -1,8 +1,5 @@
 {
   "teamsNotifyChatId": "19:70d95887c95746519d9e93175435ad38@thread.v2",
-  "teamsChannelTeamId": "5884f9de-ba25-44c3-abac-eceaf96dc398",
-  "teamsChannelId": "19:YU8k4SI0uwZ7Q7Oq3aLpN6NlLFFWL_WpRXqpZUjg_HY1@thread.tacv2",
-  "teamsChannelPollMs": 15000,
   "maxConcurrency": 2,
   "taskTimeoutMs": 900000
 }

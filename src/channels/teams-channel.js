@@ -1,6 +1,5 @@
-// Teams Channel adapter — polls a Teams channel for task messages via Graph API
-import { spawn, execSync } from 'child_process';
-import https from 'https';
+// Teams Channel adapter — polls a Teams channel for task messages via MCP
+import { spawn } from 'child_process';
 import { BaseChannel } from './base.js';
 import config from '../config.js';
 import logger from '../logger.js';
@@ -8,27 +7,60 @@ import logger from '../logger.js';
 const COMPONENT = 'TeamsChannel';
 const TASK_PREFIXES = ['/task ', '/run ', '/do '];
 
-function getGraphToken() {
-  return execSync(
-    'az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv',
-    { encoding: 'utf-8', timeout: 15_000, windowsHide: true }
-  ).trim();
-}
-
-function graphGet(path, token) {
-  return new Promise((resolve, reject) => {
-    const url = new URL(`https://graph.microsoft.com/v1.0${path}`);
-    const req = https.get(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    }, (res) => {
-      let data = '';
-      res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => {
-        try { resolve(JSON.parse(data)); } catch { resolve(null); }
-      });
+// Call the Teams MCP server to list channel messages
+function callTeamsMcp(teamId, channelId) {
+  return new Promise((resolve) => {
+    const proc = spawn('agency', ['mcp', 'teams'], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
     });
-    req.on('error', reject);
-    req.setTimeout(15_000, () => { req.destroy(); reject(new Error('timeout')); });
+
+    let stdout = '';
+    const timer = setTimeout(() => { proc.kill(); resolve(null); }, 20_000);
+
+    proc.stdout.on('data', (d) => {
+      stdout += d.toString();
+      // Check if we got a response
+      if (stdout.includes('"result"')) {
+        clearTimeout(timer);
+        proc.kill();
+        try {
+          const lines = stdout.split('\n').filter(Boolean);
+          for (const line of lines) {
+            try {
+              const parsed = JSON.parse(line);
+              if (parsed.result?.content) {
+                const textContent = parsed.result.content.find(c => c.type === 'text');
+                if (textContent) {
+                  resolve(JSON.parse(textContent.text));
+                  return;
+                }
+              }
+            } catch { /* skip */ }
+          }
+        } catch { /* skip */ }
+        resolve(null);
+      }
+    });
+
+    proc.on('close', () => { clearTimeout(timer); resolve(null); });
+    proc.on('error', () => { clearTimeout(timer); resolve(null); });
+
+    // Send initialize
+    const initReq = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'orchestrator', version: '1.0' } } });
+    proc.stdin.write(initReq + '\n');
+
+    // Send the tool call after a short delay
+    setTimeout(() => {
+      const callReq = JSON.stringify({
+        jsonrpc: '2.0', id: 2, method: 'tools/call',
+        params: {
+          name: 'teams-ListChannelMessages',
+          arguments: { teamId, channelId, top: 10 }
+        }
+      });
+      proc.stdin.write(callReq + '\n');
+    }, 1000);
   });
 }
 
@@ -40,9 +72,7 @@ export class TeamsChannelAdapter extends BaseChannel {
     this.pollIntervalMs = config.teamsChannelPollMs || 15_000;
     this.pollTimer = null;
     this.seenMessageIds = new Set();
-    this.pendingTaskMap = new Map(); // taskId → messageId
-    this.token = null;
-    this.tokenExpiry = 0;
+    this.pendingTaskMap = new Map();
   }
 
   async start() {
@@ -53,17 +83,15 @@ export class TeamsChannelAdapter extends BaseChannel {
 
     this.running = true;
 
-    // Seed seenMessageIds with current messages so we don't process old ones
+    // Seed with current messages
     try {
-      await this._refreshToken();
-      const data = await graphGet(
-        `/teams/${this.teamId}/channels/${this.channelId}/messages?$top=10`, this.token
-      );
-      if (data?.value) {
-        for (const msg of data.value) this.seenMessageIds.add(msg.id);
+      const data = await callTeamsMcp(this.teamId, this.channelId);
+      if (data?.messages) {
+        for (const msg of data.messages) this.seenMessageIds.add(msg.id);
+        logger.info(COMPONENT, `Seeded ${this.seenMessageIds.size} existing messages`);
       }
     } catch (e) {
-      logger.warn(COMPONENT, `Failed to seed message history: ${e.message}`);
+      logger.warn(COMPONENT, `Failed to seed: ${e.message}`);
     }
 
     logger.info(COMPONENT, `Polling Teams channel every ${this.pollIntervalMs / 1000}s`);
@@ -72,46 +100,30 @@ export class TeamsChannelAdapter extends BaseChannel {
 
   async stop() {
     await super.stop();
-    if (this.pollTimer) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
-    }
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
     logger.info(COMPONENT, 'Teams channel adapter stopped');
-  }
-
-  async _refreshToken() {
-    if (Date.now() < this.tokenExpiry - 60_000) return;
-    this.token = getGraphToken();
-    this.tokenExpiry = Date.now() + 50 * 60_000; // ~50 min
   }
 
   async _poll() {
     if (!this.running) return;
 
     try {
-      await this._refreshToken();
-      const data = await graphGet(
-        `/teams/${this.teamId}/channels/${this.channelId}/messages?$top=10`, this.token
-      );
+      const data = await callTeamsMcp(this.teamId, this.channelId);
+      if (!data?.messages) return;
 
-      if (!data?.value) return;
-
-      for (const msg of data.value) {
+      for (const msg of data.messages) {
         if (this.seenMessageIds.has(msg.id)) continue;
         this.seenMessageIds.add(msg.id);
 
-        if (!msg.from?.user?.displayName || !msg.body?.content) continue;
+        const author = msg.from?.displayName;
+        const content = msg.body?.content;
+        if (!author || !content) continue;
 
-        const text = this._stripHtml(msg.body.content).trim();
+        const text = this._stripHtml(content).trim();
         const taskPrompt = this._extractTaskPrompt(text);
         if (!taskPrompt) continue;
 
-        logger.info(COMPONENT, `Task from ${msg.from.user.displayName}: "${taskPrompt.slice(0, 80)}..."`);
-
-        // Reply in thread
-        this._replyToMessage(msg.id,
-          `<p>⏳ Task received from <b>${msg.from.user.displayName}</b>. Working on it...</p>`
-        ).catch(() => {});
+        logger.info(COMPONENT, `Task from ${author}: "${taskPrompt.slice(0, 80)}..."`);
 
         try {
           const taskId = await this.submitTask({
@@ -122,7 +134,7 @@ export class TeamsChannelAdapter extends BaseChannel {
           this.pendingTaskMap.set(taskId, msg.id);
           logger.info(COMPONENT, `Queued as task ${taskId}`, taskId);
         } catch (e) {
-          logger.error(COMPONENT, `Failed to queue task: ${e.message}`);
+          logger.error(COMPONENT, `Failed to queue: ${e.message}`);
         }
       }
     } catch (e) {
