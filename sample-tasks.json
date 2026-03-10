@@ -1,0 +1,8 @@
+[
+  {
+    "id": "hello-world",
+    "prompt": "Create a simple hello.txt file in the current directory that says 'Hello from Copilot Orchestrator!'",
+    "maxRefinements": 1,
+    "priority": 1
+  }
+]
