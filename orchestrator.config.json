@@ -1,0 +1,5 @@
+{
+  "teamsNotifyChatId": "19:70d95887c95746519d9e93175435ad38@thread.v2",
+  "maxConcurrency": 2,
+  "taskTimeoutMs": 900000
+}
