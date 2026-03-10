@@ -117,8 +117,9 @@ export class DiscordChannel extends BaseChannel {
       // Upload the specific output file to gist
       const gistLinks = [];
       const outputFile = task._outputFile;
+      const gistTitle = (task.original_prompt || task.prompt || '').slice(0, 100).replace(/"/g, "'");
       if (outputFile && existsSync(outputFile)) {
-        const url = this._uploadToGist(outputFile, `Task ${task.id}`);
+        const url = this._uploadToGist(outputFile, gistTitle);
         if (url) gistLinks.push({ name: basename(outputFile), url });
       }
 

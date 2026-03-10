@@ -67,11 +67,12 @@ async function sendTeamsMessage(message) {
 
 export async function notifyTaskCompleted({ taskId, prompt, score, result, outputFile }) {
   const scoreText = score != null ? `${score}/10` : 'passed';
+  const gistTitle = prompt.slice(0, 100).replace(/"/g, "'");
 
   // Upload the specific output file if it exists
   const gistLinks = [];
   if (outputFile && existsSync(outputFile)) {
-    const url = uploadToGist(outputFile, `Orchestrator task ${taskId}`);
+    const url = uploadToGist(outputFile, gistTitle);
     if (url) gistLinks.push({ name: basename(outputFile), url });
   }
 
