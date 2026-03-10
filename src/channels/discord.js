@@ -1,8 +1,8 @@
 // Discord channel adapter — real-time bot via discord.js WebSocket
 import { Client, GatewayIntentBits, Partials } from 'discord.js';
 import { execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
-import { resolve, basename } from 'path';
+import { existsSync } from 'fs';
+import { basename } from 'path';
 import { BaseChannel } from './base.js';
 import config from '../config.js';
 import logger from '../logger.js';
@@ -114,8 +114,13 @@ export class DiscordChannel extends BaseChannel {
       const channel = await this.client.channels.fetch(pending.channelId);
       if (!channel) return;
 
-      // Upload output files to gist
-      const gistLinks = this._uploadOutputs(task);
+      // Upload the specific output file to gist
+      const gistLinks = [];
+      const outputFile = task._outputFile;
+      if (outputFile && existsSync(outputFile)) {
+        const url = this._uploadToGist(outputFile, `Task ${task.id}`);
+        if (url) gistLinks.push({ name: basename(outputFile), url });
+      }
 
       const lines = [`✅ **Task ${task.id} completed**`];
 
@@ -152,36 +157,17 @@ export class DiscordChannel extends BaseChannel {
     }
   }
 
-  _uploadOutputs(task) {
-    const workdir = task.workdir || config.ROOT;
-    const since = task.started_at ? new Date(task.started_at).getTime() : Date.now() - 600_000;
-    const extensions = ['.md', '.txt', '.html', '.csv'];
-    const ignore = new Set([
-      'package.json', 'package-lock.json', 'orchestrator.config.json',
-      'README.md', 'SOUL.md', 'sample-tasks.json', '.gitignore', '.env',
-    ]);
-    const links = [];
-
+  _uploadToGist(filePath, description) {
     try {
-      for (const name of readdirSync(workdir)) {
-        if (ignore.has(name)) continue;
-        const fullPath = resolve(workdir, name);
-        try {
-          const stat = statSync(fullPath);
-          const created = stat.birthtimeMs || stat.mtimeMs;
-          if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && created >= since) {
-            const output = execSync(
-              `gh gist create "${fullPath}" --desc "Task ${task.id}: ${name}"`,
-              { encoding: 'utf-8', timeout: 30_000, windowsHide: true }
-            );
-            const urlMatch = output.match(/(https:\/\/gist\.github\.com\/\S+)/);
-            if (urlMatch) links.push({ name, url: urlMatch[1] });
-          }
-        } catch { /* skip */ }
-      }
-    } catch { /* skip */ }
-
-    return links;
+      const output = execSync(
+        `gh gist create "${filePath}" --desc "${description}"`,
+        { encoding: 'utf-8', timeout: 30_000, windowsHide: true }
+      );
+      const urlMatch = output.match(/(https:\/\/gist\.github\.com\/\S+)/);
+      return urlMatch ? urlMatch[1] : null;
+    } catch {
+      return null;
+    }
   }
 }
 

@@ -1,7 +1,7 @@
 // Teams notifier — posts task completion notifications with gist links
 import { spawn, execSync } from 'child_process';
-import { readdirSync, statSync } from 'fs';
-import { resolve, basename } from 'path';
+import { existsSync } from 'fs';
+import { basename } from 'path';
 import config from '../config.js';
 import logger from '../logger.js';
 
@@ -25,38 +25,6 @@ function uploadToGist(filePath, description) {
     logger.warn(COMPONENT, `Gist upload failed for ${filePath}: ${e.message}`);
   }
   return null;
-}
-
-/**
- * Find output files created by a task in its workdir.
- * Only picks up files created AFTER the task started, excludes known project files.
- */
-function findTaskOutputFiles(workdir, startedAt) {
-  const since = startedAt ? new Date(startedAt).getTime() : Date.now() - 600_000;
-  const extensions = ['.md', '.txt', '.html', '.csv'];
-  const ignore = new Set([
-    'package.json', 'package-lock.json', 'orchestrator.config.json',
-    'README.md', 'SOUL.md', 'sample-tasks.json', '.gitignore', '.env',
-    'prototype-ideas.md', 'stock-report.md', // old reports from previous runs
-  ]);
-  const results = [];
-
-  try {
-    for (const name of readdirSync(workdir)) {
-      if (ignore.has(name)) continue;
-      const fullPath = resolve(workdir, name);
-      try {
-        const stat = statSync(fullPath);
-        // Only files created (birthtimeMs) after task started
-        const created = stat.birthtimeMs || stat.mtimeMs;
-        if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && created >= since) {
-          results.push(fullPath);
-        }
-      } catch { /* skip unreadable files */ }
-    }
-  } catch { /* skip unreadable dirs */ }
-
-  return results;
 }
 
 /**
@@ -97,15 +65,14 @@ async function sendTeamsMessage(message) {
   });
 }
 
-export async function notifyTaskCompleted({ taskId, prompt, score, result, workdir, startedAt }) {
+export async function notifyTaskCompleted({ taskId, prompt, score, result, outputFile }) {
   const scoreText = score != null ? `${score}/10` : 'passed';
 
-  // Find and upload output files to gist
-  const outputFiles = findTaskOutputFiles(workdir || config.ROOT, startedAt);
+  // Upload the specific output file if it exists
   const gistLinks = [];
-  for (const file of outputFiles) {
-    const url = uploadToGist(file, `Orchestrator task ${taskId}: ${basename(file)}`);
-    if (url) gistLinks.push({ name: basename(file), url });
+  if (outputFile && existsSync(outputFile)) {
+    const url = uploadToGist(outputFile, `Orchestrator task ${taskId}`);
+    if (url) gistLinks.push({ name: basename(outputFile), url });
   }
 
   const lines = [
@@ -149,15 +116,14 @@ export function attachNotifier(runtime, getTaskFn) {
 
   logger.info(COMPONENT, `Teams notifications → chat ${config.teamsNotifyChatId}`);
 
-  runtime.on('task-completed', async ({ taskId, result, score }) => {
+  runtime.on('task-completed', async ({ taskId, result, score, outputFile }) => {
     const task = getTaskFn(taskId);
     await notifyTaskCompleted({
       taskId,
       prompt: task?.original_prompt || task?.prompt || taskId,
       score,
       result,
-      workdir: task?.workdir,
-      startedAt: task?.started_at,
+      outputFile,
     });
   });
 

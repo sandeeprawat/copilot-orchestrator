@@ -58,6 +58,10 @@ export function createAgentRuntime(runtimeConfig = config) {
       emitter.emit('task-started', { taskId, task });
       logger.info(COMPONENT, `▶ Starting task ${taskId}`, taskId);
 
+      // Determine output file for this task
+      const outputFile = `output-${taskId}.md`;
+      const outputPath = resolve(task.workdir || runtimeConfig.ROOT, outputFile);
+
       // Build enriched prompt with system context
       let systemPrompt = '';
       try {
@@ -70,13 +74,14 @@ export function createAgentRuntime(runtimeConfig = config) {
           memoryContext: memCtx,
           skillCatalog,
           sessionContext: sessionCtx?.context || '',
+          outputFile,
         });
       } catch (e) {
         logger.debug(COMPONENT, `System prompt enrichment skipped: ${e.message}`, taskId);
       }
 
       // Compose the final prompt
-      const enrichedTask = { ...task };
+      const enrichedTask = { ...task, outputFile: outputPath };
       if (systemPrompt) {
         enrichedTask.prompt = systemPrompt + '\n\n' + task.prompt;
       }
@@ -130,6 +135,7 @@ export function createAgentRuntime(runtimeConfig = config) {
           taskId,
           result: execResult.result,
           score: evaluation.score,
+          outputFile: outputPath,
         });
       } else {
         // Re-queue for refinement with full context

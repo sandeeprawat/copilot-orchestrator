@@ -75,9 +75,10 @@ export async function startOrchestrator(options = {}) {
   logger.info(COMPONENT, '═══════════════════════════════════════════════');
 
   // Wire runtime events to channel adapters so they can post results
-  runtime.on('task-completed', ({ taskId }) => {
+  runtime.on('task-completed', ({ taskId, outputFile }) => {
     const task = runtime.getTask(taskId);
     if (task) {
+      task._outputFile = outputFile; // attach for channel adapters
       for (const ch of channels) {
         if (ch.onTaskComplete) ch.onTaskComplete(task).catch(() => {});
       }

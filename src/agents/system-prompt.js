@@ -42,6 +42,7 @@ export function buildSystemPrompt({
   skillCatalog,
   sessionContext,
   channelHints,
+  outputFile,
 } = {}) {
   const parts = [];
 
@@ -62,6 +63,15 @@ export function buildSystemPrompt({
 
   // Channel-specific hints
   parts.push(section('channel', channelHints ?? ''));
+
+  // Output instructions
+  if (outputFile) {
+    parts.push(section('output_instructions',
+      `IMPORTANT: Write your complete result to the file "${outputFile}". ` +
+      `This file will be shared with the user. Do NOT just respond with text — ` +
+      `you MUST create the file with your full output. Use markdown formatting.`
+    ));
+  }
 
   return parts.filter(Boolean).join('\n\n');
 }
