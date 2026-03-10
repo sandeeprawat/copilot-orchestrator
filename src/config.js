@@ -6,6 +6,15 @@ import { fileURLToPath } from 'url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
 
+// Load .env file if present
+const envPath = resolve(ROOT, '.env');
+if (existsSync(envPath)) {
+  for (const line of readFileSync(envPath, 'utf-8').split('\n')) {
+    const match = line.match(/^\s*([^#=]+?)\s*=\s*(.*?)\s*$/);
+    if (match && !process.env[match[1]]) process.env[match[1]] = match[2];
+  }
+}
+
 const defaults = {
   maxConcurrency: 3,
   pollIntervalMs: 2000,

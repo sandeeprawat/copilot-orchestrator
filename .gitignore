@@ -10,3 +10,4 @@ sessions/
 hello.txt
 test-output.txt
 *.log
+.env
