@@ -17,6 +17,11 @@ const defaults = {
   dbPath: resolve(ROOT, 'orchestrator.db'),
   copilotBin: 'copilot',
   defaultCopilotArgs: ['--allow-all', '--autopilot', '--output-format', 'json', '-s'],
+  // MCP servers to pass through to copilot agents (enables tools like Teams, email, etc.)
+  // Set to path of MCP config JSON, or null to use ~/.copilot/mcp-config.json defaults
+  mcpConfigPath: null,
+  // Teams notification: set to a chat ID (thread.v2 format) to auto-notify on task complete/fail
+  teamsNotifyChatId: null,
   gatewayPort: 18789,
   httpPort: 3000,
   soulPath: resolve(ROOT, 'SOUL.md'),

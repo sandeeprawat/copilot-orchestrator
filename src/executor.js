@@ -19,6 +19,11 @@ export async function executeTask(task) {
     ...extraArgs,
   ];
 
+  // Pass through MCP config so agents get tools like Teams, email, etc.
+  if (config.mcpConfigPath) {
+    args.push('--additional-mcp-config', `@${config.mcpConfigPath}`);
+  }
+
   // Add --share to save session transcript
   if (!existsSync(config.logsDir)) mkdirSync(config.logsDir, { recursive: true });
   const sessionFile = resolve(config.logsDir, `session-${taskId}.md`);

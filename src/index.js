@@ -3,6 +3,7 @@ import { startGateway, broadcastEvent, submitTask as gwSubmitTask } from './gate
 import { FileInboxChannel } from './channels/file-inbox.js';
 import { HTTPChannel } from './channels/http.js';
 import { CLIStdinChannel } from './channels/cli-stdin.js';
+import { attachNotifier } from './notifications/teams.js';
 import config from './config.js';
 import logger from './logger.js';
 
@@ -12,6 +13,9 @@ export async function startOrchestrator(options = {}) {
   // Create agent runtime
   const runtime = createAgentRuntime(config);
   await runtime.start();
+
+  // Attach Teams notifier (auto-posts on task-completed / task-failed)
+  attachNotifier(runtime, (taskId) => runtime.getTask(taskId));
 
   // Start gateway WebSocket server
   startGateway(runtime);
@@ -48,6 +52,8 @@ export async function startOrchestrator(options = {}) {
   logger.info(COMPONENT, `  Gateway: ws://localhost:${config.gatewayPort}`);
   logger.info(COMPONENT, `  HTTP API: http://localhost:${config.httpPort}`);
   logger.info(COMPONENT, `  Concurrency: ${config.maxConcurrency}`);
+  if (config.mcpConfigPath) logger.info(COMPONENT, `  MCP config: ${config.mcpConfigPath}`);
+  if (config.teamsNotifyChatId) logger.info(COMPONENT, `  Teams notify: ${config.teamsNotifyChatId}`);
   logger.info(COMPONENT, '═══════════════════════════════════════════════');
 
   // Graceful shutdown
