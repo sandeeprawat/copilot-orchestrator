@@ -25,14 +25,14 @@ export class FileInboxChannel extends BaseChannel {
     this.running = true;
     logger.info(COMPONENT, `Watching inbox: ${this.inboxDir}`);
 
-    this.watcher = chokidar.watch(resolve(this.inboxDir, '*.json'), {
+    this.watcher = chokidar.watch(this.inboxDir, {
       ignoreInitial: false,
       awaitWriteFinish: { stabilityThreshold: 500, pollInterval: 100 },
-      ignored: [this.processedDir, this.resultsDir],
+      depth: 0, // only watch top-level files, not subdirs
     });
 
     this.watcher.on('add', (filePath) => {
-      if (this.running) this._processFile(filePath);
+      if (this.running && filePath.endsWith('.json')) this._processFile(filePath);
     });
 
     this.watcher.on('error', (err) => {
