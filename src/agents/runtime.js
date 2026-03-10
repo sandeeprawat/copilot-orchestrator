@@ -37,6 +37,17 @@ export function createAgentRuntime(runtimeConfig = config) {
   async function initSubsystems() {
     initDB();
 
+    // Resume tasks that were running when we last shut down
+    try {
+      const db = (await import('../taskdb.js')).getDB();
+      const stuck = db.prepare(`UPDATE tasks SET status = 'pending', started_at = NULL WHERE status = 'running'`).run();
+      if (stuck.changes > 0) {
+        logger.info(COMPONENT, `Resumed ${stuck.changes} interrupted task(s) from previous run`);
+      }
+    } catch (e) {
+      logger.warn(COMPONENT, `Failed to resume tasks: ${e.message}`);
+    }
+
     try { await loadSkills(); } catch (e) {
       logger.warn(COMPONENT, `Skills not loaded: ${e.message}`);
     }

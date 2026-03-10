@@ -11,3 +11,4 @@ hello.txt
 test-output.txt
 *.log
 .env
+output-*.md
