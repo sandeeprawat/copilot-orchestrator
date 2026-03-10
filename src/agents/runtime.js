@@ -1,5 +1,6 @@
 // Agent Runtime — refactored agentic loop with event-driven lifecycle
 import { EventEmitter } from 'events';
+import { resolve } from 'path';
 import {
   initDB, addTask, getNextPendingTasks, claimTask, completeTask,
   failTask, requeueForRefinement, getRunningCount,
