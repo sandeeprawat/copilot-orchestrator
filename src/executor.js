@@ -118,33 +118,36 @@ export async function executeTask(task) {
 }
 
 function parseOutput(rawOutput, taskId) {
-  // Copilot JSON output is JSONL — one JSON object per line
   const lines = rawOutput.split('\n').filter(Boolean);
-  const messages = [];
+  const parsed = [];
 
   for (const line of lines) {
-    try {
-      const obj = JSON.parse(line);
-      messages.push(obj);
-    } catch {
-      // Non-JSON line, skip
-    }
+    try { parsed.push(JSON.parse(line)); } catch { /* skip */ }
   }
 
-  // Extract assistant messages (the actual work output)
-  const assistantMessages = messages
+  if (parsed.length === 0) return rawOutput.trim() || null;
+
+  // Format 1: type-based events (copilot CLI --output-format json)
+  const assistantMsgs = parsed
+    .filter(m => m.type === 'assistant.message' && m.data?.content?.trim())
+    .map(m => m.data.content.trim());
+
+  if (assistantMsgs.length > 0) {
+    // Return the last substantial message (the final answer)
+    return assistantMsgs[assistantMsgs.length - 1];
+  }
+
+  // Format 2: result event
+  const resultMsg = parsed.find(m => m.type === 'result' && m.data?.content?.trim());
+  if (resultMsg) return resultMsg.data.content.trim();
+
+  // Format 3: role-based (older format)
+  const roleMsgs = parsed
     .filter(m => m.role === 'assistant' && m.message)
     .map(m => m.message);
+  if (roleMsgs.length > 0) return roleMsgs.join('\n\n---\n\n');
 
-  if (assistantMessages.length > 0) {
-    return assistantMessages.join('\n\n---\n\n');
-  }
-
-  // Fallback: return full raw output if no structured messages found
-  if (rawOutput.trim()) {
-    logger.debug(COMPONENT, `No structured messages found, returning raw output`, taskId);
-    return rawOutput;
-  }
-
-  return null;
+  // Fallback
+  logger.debug(COMPONENT, `No structured messages found, returning raw output`, taskId);
+  return rawOutput.trim() || null;
 }
