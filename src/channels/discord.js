@@ -106,9 +106,9 @@ export class DiscordChannel extends BaseChannel {
   }
 
   async onTaskComplete(task) {
-    const pending = this.pendingTasks.get(task.id);
+    // Walk parent chain to find the original Discord message
+    const pending = this._findPending(task);
     if (!pending) return;
-    this.pendingTasks.delete(task.id);
 
     try {
       const channel = await this.client.channels.fetch(pending.channelId);
@@ -122,7 +122,7 @@ export class DiscordChannel extends BaseChannel {
         if (url) gistLinks.push({ name: basename(outputFile), url });
       }
 
-      const lines = [`✅ **Task ${task.id} completed**`];
+      const lines = [`✅ **Task completed** (score: ${task.score ?? 'passed'})`];
 
       if (gistLinks.length > 0) {
         lines.push('');
@@ -144,17 +144,41 @@ export class DiscordChannel extends BaseChannel {
   }
 
   async onTaskFailed(task) {
-    const pending = this.pendingTasks.get(task.id);
+    const pending = this._findPending(task);
     if (!pending) return;
-    this.pendingTasks.delete(task.id);
 
     try {
       await pending.originalMsg.reply(
-        `❌ **Task ${task.id} failed:** ${(task.error || 'Unknown error').slice(0, 500)}`
+        `❌ **Task failed:** ${(task.error || 'Unknown error').slice(0, 500)}`
       );
     } catch (e) {
       logger.error(COMPONENT, `Failed to post failure for ${task.id}: ${e.message}`);
     }
+  }
+
+  // Walk the parent_task_id chain to find the original Discord message
+  _findPending(task) {
+    // Direct match
+    if (this.pendingTasks.has(task.id)) {
+      const p = this.pendingTasks.get(task.id);
+      this.pendingTasks.delete(task.id);
+      return p;
+    }
+    // Walk parent chain
+    let parentId = task.parent_task_id;
+    while (parentId) {
+      if (this.pendingTasks.has(parentId)) {
+        const p = this.pendingTasks.get(parentId);
+        this.pendingTasks.delete(parentId);
+        return p;
+      }
+      // Try to get grandparent via runtime
+      try {
+        const parentTask = this.gateway.runtime?.getTask(parentId);
+        parentId = parentTask?.parent_task_id || null;
+      } catch { parentId = null; }
+    }
+    return null;
   }
 
   _uploadToGist(filePath, description) {
