@@ -155,15 +155,21 @@ export class DiscordChannel extends BaseChannel {
   _uploadOutputs(task) {
     const workdir = task.workdir || config.ROOT;
     const since = task.started_at ? new Date(task.started_at).getTime() : Date.now() - 600_000;
-    const extensions = ['.md', '.txt', '.json', '.html', '.csv'];
+    const extensions = ['.md', '.txt', '.html', '.csv'];
+    const ignore = new Set([
+      'package.json', 'package-lock.json', 'orchestrator.config.json',
+      'README.md', 'SOUL.md', 'sample-tasks.json', '.gitignore', '.env',
+    ]);
     const links = [];
 
     try {
       for (const name of readdirSync(workdir)) {
+        if (ignore.has(name)) continue;
         const fullPath = resolve(workdir, name);
         try {
           const stat = statSync(fullPath);
-          if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && stat.mtimeMs >= since) {
+          const created = stat.birthtimeMs || stat.mtimeMs;
+          if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && created >= since) {
             const output = execSync(
               `gh gist create "${fullPath}" --desc "Task ${task.id}: ${name}"`,
               { encoding: 'utf-8', timeout: 30_000, windowsHide: true }

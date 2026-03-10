@@ -28,20 +28,28 @@ function uploadToGist(filePath, description) {
 }
 
 /**
- * Find output files created/modified by a task in its workdir.
- * Looks for recently modified .md, .txt, .json, .html files.
+ * Find output files created by a task in its workdir.
+ * Only picks up files created AFTER the task started, excludes known project files.
  */
 function findTaskOutputFiles(workdir, startedAt) {
   const since = startedAt ? new Date(startedAt).getTime() : Date.now() - 600_000;
-  const extensions = ['.md', '.txt', '.json', '.html', '.csv'];
+  const extensions = ['.md', '.txt', '.html', '.csv'];
+  const ignore = new Set([
+    'package.json', 'package-lock.json', 'orchestrator.config.json',
+    'README.md', 'SOUL.md', 'sample-tasks.json', '.gitignore', '.env',
+    'prototype-ideas.md', 'stock-report.md', // old reports from previous runs
+  ]);
   const results = [];
 
   try {
     for (const name of readdirSync(workdir)) {
+      if (ignore.has(name)) continue;
       const fullPath = resolve(workdir, name);
       try {
         const stat = statSync(fullPath);
-        if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && stat.mtimeMs >= since) {
+        // Only files created (birthtimeMs) after task started
+        const created = stat.birthtimeMs || stat.mtimeMs;
+        if (stat.isFile() && extensions.some(ext => name.endsWith(ext)) && created >= since) {
           results.push(fullPath);
         }
       } catch { /* skip unreadable files */ }

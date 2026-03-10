@@ -30,11 +30,11 @@ export class TeamsChannelAdapter extends BaseChannel {
     this.running = true;
     logger.info(COMPONENT, `Polling Teams channel every ${this.pollIntervalMs / 1000}s`);
 
-    // Post a startup message
-    await this._postToChannel(
+    // Post a startup message (non-blocking)
+    this._postToChannel(
       '<p>🤖 <b>Orchestrator online.</b> Post a message starting with <code>/task</code> to assign work.</p>' +
       '<p>Example: <code>/task Search for trending AI papers this week and summarize the top 5</code></p>'
-    );
+    ).catch(() => {});
 
     // Start polling
     this._poll();
