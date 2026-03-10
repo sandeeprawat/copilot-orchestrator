@@ -26,6 +26,8 @@ const defaults = {
   teamsChannelTeamId: null,
   teamsChannelId: null,
   teamsChannelPollMs: 15_000,
+  // Discord bot: set token to enable (create at https://discord.com/developers)
+  discordBotToken: null,
   gatewayPort: 18789,
   httpPort: 3000,
   soulPath: resolve(ROOT, 'SOUL.md'),

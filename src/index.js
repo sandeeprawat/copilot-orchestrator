@@ -4,6 +4,7 @@ import { FileInboxChannel } from './channels/file-inbox.js';
 import { HTTPChannel } from './channels/http.js';
 import { CLIStdinChannel } from './channels/cli-stdin.js';
 import { TeamsChannelAdapter } from './channels/teams-channel.js';
+import { DiscordChannel } from './channels/discord.js';
 import { attachNotifier } from './notifications/teams.js';
 import config from './config.js';
 import logger from './logger.js';
@@ -55,6 +56,13 @@ export async function startOrchestrator(options = {}) {
     channels.push(teamsChannel);
   }
 
+  // Discord bot (real-time WebSocket)
+  if (config.discordBotToken) {
+    const discordChannel = new DiscordChannel(gateway);
+    await discordChannel.start();
+    channels.push(discordChannel);
+  }
+
   logger.info(COMPONENT, '═══════════════════════════════════════════════');
   logger.info(COMPONENT, '  Copilot Orchestrator (OpenClaw-style)');
   logger.info(COMPONENT, `  Gateway: ws://localhost:${config.gatewayPort}`);
@@ -63,7 +71,26 @@ export async function startOrchestrator(options = {}) {
   if (config.mcpConfigPath) logger.info(COMPONENT, `  MCP config: ${config.mcpConfigPath}`);
   if (config.teamsNotifyChatId) logger.info(COMPONENT, `  Teams notify: ${config.teamsNotifyChatId}`);
   if (config.teamsChannelId) logger.info(COMPONENT, `  Teams channel: listening for /task messages`);
+  if (config.discordBotToken) logger.info(COMPONENT, `  Discord: real-time bot active`);
   logger.info(COMPONENT, '═══════════════════════════════════════════════');
+
+  // Wire runtime events to channel adapters so they can post results
+  runtime.on('task-completed', ({ taskId }) => {
+    const task = runtime.getTask(taskId);
+    if (task) {
+      for (const ch of channels) {
+        if (ch.onTaskComplete) ch.onTaskComplete(task).catch(() => {});
+      }
+    }
+  });
+  runtime.on('task-failed', ({ taskId }) => {
+    const task = runtime.getTask(taskId);
+    if (task) {
+      for (const ch of channels) {
+        if (ch.onTaskFailed) ch.onTaskFailed(task).catch(() => {});
+      }
+    }
+  });
 
   // Graceful shutdown
   const shutdown = async (signal) => {
