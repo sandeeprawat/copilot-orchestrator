@@ -62,7 +62,7 @@ async function sendTeamsMessage(message) {
   }
 
   return new Promise((resolve) => {
-    const prompt = `Post this exact message to Teams chat ID "${chatId}". Use the teams-PostMessage tool with chatId="${chatId}" and content exactly as follows:\n\n${message}\n\nDo not modify the message. Just send it.`;
+    const prompt = `Post this exact HTML message to Teams chat ID "${chatId}". Use the teams-PostMessage tool with chatId="${chatId}", contentType="html", and content exactly as follows:\n\n${message}\n\nDo not modify the message. Send it as HTML.`;
 
     const args = ['-p', prompt, '--allow-all', '--autopilot', '-s', '--output-format', 'json'];
     const proc = spawn(config.copilotBin, args, {
@@ -101,20 +101,20 @@ export async function notifyTaskCompleted({ taskId, prompt, score, result, workd
   }
 
   const lines = [
-    `✅ **Task Completed: ${taskId}**`,
-    `📋 ${prompt.slice(0, 150)}`,
-    `⭐ Score: ${scoreText}`,
+    `<p><b>✅ Task Completed: ${taskId}</b></p>`,
+    `<p>📋 ${prompt.slice(0, 150)}</p>`,
+    `<p>⭐ Score: ${scoreText}</p>`,
   ];
 
   if (gistLinks.length > 0) {
-    lines.push('');
-    lines.push('📎 **Reports:**');
+    lines.push('<p>📎 <b>Reports:</b></p><ul>');
     for (const link of gistLinks) {
-      lines.push(`  • ${link.name}: ${link.url}`);
+      lines.push(`<li><a href="${link.url}">${link.name}</a></li>`);
     }
+    lines.push('</ul>');
   } else {
     const preview = (result || '').slice(0, 300).replace(/\n/g, ' ');
-    lines.push(`📄 ${preview}${result && result.length > 300 ? '...' : ''}`);
+    lines.push(`<p>📄 ${preview}${result && result.length > 300 ? '...' : ''}</p>`);
   }
 
   await sendTeamsMessage(lines.join('\n'));
@@ -122,9 +122,9 @@ export async function notifyTaskCompleted({ taskId, prompt, score, result, workd
 
 export async function notifyTaskFailed({ taskId, prompt, error }) {
   const message = [
-    `❌ **Task Failed: ${taskId}**`,
-    `📋 ${prompt.slice(0, 150)}`,
-    `🔥 Error: ${(error || 'Unknown').slice(0, 200)}`,
+    `<p><b>❌ Task Failed: ${taskId}</b></p>`,
+    `<p>📋 ${prompt.slice(0, 150)}</p>`,
+    `<p>🔥 Error: ${(error || 'Unknown').slice(0, 200)}</p>`,
   ].join('\n');
 
   await sendTeamsMessage(message);
