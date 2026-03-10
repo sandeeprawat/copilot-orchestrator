@@ -17,6 +17,15 @@ const defaults = {
   dbPath: resolve(ROOT, 'orchestrator.db'),
   copilotBin: 'copilot',
   defaultCopilotArgs: ['--allow-all', '--autopilot', '--output-format', 'json', '-s'],
+  gatewayPort: 18789,
+  httpPort: 3000,
+  soulPath: resolve(ROOT, 'SOUL.md'),
+  memoryDir: resolve(ROOT, 'memory'),
+  skillsDir: resolve(ROOT, 'skills'),
+  sessionsDir: resolve(ROOT, 'sessions'),
+  maxSessionHistory: 20,
+  memorySearchResults: 5,
+  autoSaveMemory: true,
   evaluationPromptTemplate: `You are a strict quality evaluator for AI agent task output.
 
 ORIGINAL TASK:

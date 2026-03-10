@@ -4,21 +4,28 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import chalk from 'chalk';
 import { initDB, addTask, listTasks, getTask, getStats } from './taskdb.js';
-import { startDaemon } from './daemon.js';
+import { startOrchestrator } from './index.js';
 import { readFileSync, existsSync } from 'fs';
 import { resolve } from 'path';
 import config from './config.js';
+import { setLogLevel } from './logger.js';
 
 const cli = yargs(hideBin(process.argv))
   .scriptName('orchestrator')
   .usage('$0 <command> [options]')
-  .command('start', 'Start the orchestrator daemon', (yargs) => {
+  .command('start', 'Start the orchestrator', (yargs) => {
     return yargs
       .option('concurrency', { alias: 'c', type: 'number', describe: 'Max concurrent agents' })
-      .option('debug', { alias: 'd', type: 'boolean', describe: 'Enable debug logging' });
+      .option('debug', { alias: 'd', type: 'boolean', describe: 'Enable debug logging' })
+      .option('interactive', { alias: 'i', type: 'boolean', describe: 'Enable CLI stdin channel' })
+      .option('port', { type: 'number', describe: 'HTTP API port' })
+      .option('ws-port', { type: 'number', describe: 'WebSocket gateway port' });
   }, (argv) => {
     if (argv.concurrency) config.maxConcurrency = argv.concurrency;
-    startDaemon();
+    if (argv.port) config.httpPort = argv.port;
+    if (argv.wsPort) config.gatewayPort = argv.wsPort;
+    if (argv.debug) setLogLevel('debug');
+    startOrchestrator({ interactive: argv.interactive || false });
   })
   .command('add <prompt>', 'Add a task to the queue', (yargs) => {
     return yargs
@@ -149,6 +156,78 @@ const cli = yargs(hideBin(process.argv))
         id: t.id,
       });
       console.log(chalk.green(`✓ Imported: ${id}`));
+    }
+  })
+  .command('memory', 'Memory operations', (yargs) => {
+    return yargs
+      .command('search <query>', 'Search memory for relevant context', (yargs) => {
+        return yargs
+          .positional('query', { describe: 'Search query', type: 'string' })
+          .option('limit', { alias: 'n', type: 'number', default: 5, describe: 'Max results' });
+      }, async (argv) => {
+        try {
+          const { search } = await import('./memory/index.js');
+          const results = search(argv.query);
+          if (!results || results.length === 0) {
+            console.log(chalk.yellow('No memory entries found.'));
+            return;
+          }
+          console.log(chalk.bold(`\n  Memory results for "${argv.query}":\n`));
+          for (const entry of results) {
+            console.log(chalk.cyan(`  [${entry.source}]`) + ` ${entry.heading}`);
+            console.log(chalk.gray(`  ${entry.content.slice(0, 200)}`));
+          }
+          console.log();
+        } catch (e) {
+          console.log(chalk.red(`Memory search failed: ${e.message}`));
+        }
+      })
+      .command('save <topic> <content>', 'Save a fact to memory', (yargs) => {
+        return yargs
+          .positional('topic', { describe: 'Topic/category', type: 'string' })
+          .positional('content', { describe: 'Content to remember', type: 'string' });
+      }, async (argv) => {
+        try {
+          const { save } = await import('./memory/index.js');
+          save(argv.topic, argv.content);
+          console.log(chalk.green('✓ Saved to memory.'));
+        } catch (e) {
+          console.log(chalk.red(`Memory save failed: ${e.message}`));
+        }
+      })
+      .command('list', 'List all memory topics', {}, async () => {
+        try {
+          const { listTopics } = await import('./memory/index.js');
+          const topics = listTopics();
+          if (!topics || topics.length === 0) {
+            console.log(chalk.yellow('No memory topics.'));
+            return;
+          }
+          console.log(chalk.bold('\n  Memory topics:\n'));
+          for (const topic of topics) {
+            console.log(chalk.cyan(`  • ${topic}`));
+          }
+          console.log();
+        } catch (e) {
+          console.log(chalk.red(`Memory list failed: ${e.message}`));
+        }
+      })
+      .demandCommand(1, 'Specify a memory subcommand: search, save, list');
+  })
+  .command('skills', 'List available skills', {}, async () => {
+    try {
+      const { loadSkills, getSkillCatalog } = await import('./skills/registry.js');
+      await loadSkills();
+      const catalog = getSkillCatalog();
+      if (!catalog) {
+        console.log(chalk.yellow('No skills found.'));
+        return;
+      }
+      console.log(chalk.bold('\n  Available Skills:\n'));
+      console.log(catalog);
+      console.log();
+    } catch (e) {
+      console.log(chalk.red(`Skills listing failed: ${e.message}`));
     }
   })
   .demandCommand(1, 'Please specify a command')

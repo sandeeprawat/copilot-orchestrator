@@ -1,0 +1,11 @@
+{
+  "name": "echo",
+  "description": "Echoes back the input message — useful for testing",
+  "params": {
+    "type": "object",
+    "properties": {
+      "message": { "type": "string", "description": "The message to echo" }
+    },
+    "required": ["message"]
+  }
+}

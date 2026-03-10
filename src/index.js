@@ -1,4 +1,74 @@
-// Entry point — just starts the daemon
-import { startDaemon } from './daemon.js';
+import { createAgentRuntime } from './agents/runtime.js';
+import { startGateway, broadcastEvent, submitTask as gwSubmitTask } from './gateway/server.js';
+import { FileInboxChannel } from './channels/file-inbox.js';
+import { HTTPChannel } from './channels/http.js';
+import { CLIStdinChannel } from './channels/cli-stdin.js';
+import config from './config.js';
+import logger from './logger.js';
 
-startDaemon();
+const COMPONENT = 'Main';
+
+export async function startOrchestrator(options = {}) {
+  // Create agent runtime
+  const runtime = createAgentRuntime(config);
+  await runtime.start();
+
+  // Start gateway WebSocket server
+  startGateway(runtime);
+
+  // Build a gateway interface object that channels can use
+  const gateway = {
+    submitTask: gwSubmitTask,
+    broadcastEvent,
+    runtime,
+  };
+
+  // Start channels
+  const channels = [];
+
+  // File inbox always active
+  const fileChannel = new FileInboxChannel(gateway);
+  await fileChannel.start();
+  channels.push(fileChannel);
+
+  // HTTP channel
+  const httpChannel = new HTTPChannel(gateway);
+  await httpChannel.start();
+  channels.push(httpChannel);
+
+  // CLI stdin channel (interactive mode)
+  if (options.interactive) {
+    const cliChannel = new CLIStdinChannel(gateway);
+    await cliChannel.start();
+    channels.push(cliChannel);
+  }
+
+  logger.info(COMPONENT, '═══════════════════════════════════════════════');
+  logger.info(COMPONENT, '  Copilot Orchestrator (OpenClaw-style)');
+  logger.info(COMPONENT, `  Gateway: ws://localhost:${config.gatewayPort}`);
+  logger.info(COMPONENT, `  HTTP API: http://localhost:${config.httpPort}`);
+  logger.info(COMPONENT, `  Concurrency: ${config.maxConcurrency}`);
+  logger.info(COMPONENT, '═══════════════════════════════════════════════');
+
+  // Graceful shutdown
+  const shutdown = async (signal) => {
+    logger.info(COMPONENT, `${signal} received, shutting down...`);
+    for (const ch of channels) await ch.stop();
+    await runtime.stop();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+  return { runtime, gateway, channels };
+}
+
+// Auto-start if run directly
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith('index.js') ||
+  process.argv[1].endsWith('src\\index.js') ||
+  process.argv[1].endsWith('src/index.js')
+);
+if (isMain) {
+  startOrchestrator({ interactive: false });
+}

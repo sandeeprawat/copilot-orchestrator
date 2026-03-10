@@ -1,6 +1,12 @@
 node_modules/
 orchestrator.db
+orchestrator.db-shm
+orchestrator.db-wal
 logs/
 tasks/processed/
+tasks/results/
+memory/
+sessions/
 hello.txt
+test-output.txt
 *.log
