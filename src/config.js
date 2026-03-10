@@ -22,6 +22,10 @@ const defaults = {
   mcpConfigPath: null,
   // Teams notification: set to a chat ID (thread.v2 format) to auto-notify on task complete/fail
   teamsNotifyChatId: null,
+  // Teams channel adapter: poll a Teams channel for /task messages
+  teamsChannelTeamId: null,
+  teamsChannelId: null,
+  teamsChannelPollMs: 15_000,
   gatewayPort: 18789,
   httpPort: 3000,
   soulPath: resolve(ROOT, 'SOUL.md'),
