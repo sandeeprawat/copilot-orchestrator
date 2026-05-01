@@ -19,6 +19,11 @@ export async function executeTask(task) {
     ...extraArgs,
   ];
 
+  // Prepend --model flag if the task specifies a model
+  if (task.model) {
+    args.unshift('--model', task.model);
+  }
+
   // Pass through MCP config so agents get tools like Teams, email, etc.
   if (config.mcpConfigPath) {
     args.push('--additional-mcp-config', `@${config.mcpConfigPath}`);

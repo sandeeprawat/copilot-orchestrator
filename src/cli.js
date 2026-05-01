@@ -34,6 +34,7 @@ const cli = yargs(hideBin(process.argv))
       .option('priority', { alias: 'p', type: 'number', default: 5, describe: 'Priority (1=highest)' })
       .option('max-refinements', { alias: 'r', type: 'number', describe: 'Max self-improvement iterations' })
       .option('timeout', { alias: 't', type: 'number', describe: 'Timeout in seconds' })
+      .option('model', { alias: 'm', type: 'string', describe: 'Model to use (e.g. gpt-5.5, claude-opus-4.7, claude-opus-4.6)' })
       .option('id', { type: 'string', describe: 'Custom task ID' });
   }, (argv) => {
     initDB();
@@ -43,6 +44,7 @@ const cli = yargs(hideBin(process.argv))
       priority: argv.priority,
       maxRefinements: argv.maxRefinements ?? config.maxRefinements,
       timeout: argv.timeout ? argv.timeout * 1000 : config.taskTimeoutMs,
+      model: argv.model || null,
       id: argv.id,
     });
     console.log(chalk.green(`✓ Task added: ${id}`));
@@ -111,6 +113,7 @@ const cli = yargs(hideBin(process.argv))
     console.log(`  Status:       ${task.status}`);
     console.log(`  Prompt:       ${task.prompt}`);
     console.log(`  Working Dir:  ${task.workdir || '(default)'}`);
+    console.log(`  Model:        ${task.model || '(default)'}`);
     console.log(`  Priority:     ${task.priority}`);
     console.log(`  Score:        ${task.score ?? '—'}`);
     console.log(`  Refinements:  ${task.refinement_count}/${task.max_refinements}`);
@@ -153,10 +156,52 @@ const cli = yargs(hideBin(process.argv))
         timeout: t.timeout ?? config.taskTimeoutMs,
         tags: t.tags || [],
         copilotArgs: t.copilotArgs || [],
+        model: t.model || null,
         id: t.id,
       });
       console.log(chalk.green(`✓ Imported: ${id}`));
     }
+  })
+  .command('compare <prompt>', 'Run a prompt across multiple models and compare results', (yargs) => {
+    return yargs
+      .positional('prompt', { describe: 'Task prompt to run on each model', type: 'string' })
+      .option('models', {
+        type: 'string',
+        default: 'gpt-5.5,claude-opus-4.7,claude-opus-4.6',
+        describe: 'Comma-separated list of models to compare',
+      })
+      .option('workdir', { alias: 'w', type: 'string', describe: 'Working directory' })
+      .option('priority', { alias: 'p', type: 'number', default: 5, describe: 'Priority (1=highest)' })
+      .option('max-refinements', { alias: 'r', type: 'number', default: 0, describe: 'Max self-improvement iterations' })
+      .option('timeout', { alias: 't', type: 'number', describe: 'Timeout in seconds' });
+  }, (argv) => {
+    initDB();
+    const models = argv.models.split(',').map(m => m.trim()).filter(Boolean);
+    if (models.length < 2) {
+      console.log(chalk.red('Please specify at least two models to compare.'));
+      process.exit(1);
+    }
+
+    console.log(chalk.bold(`\n  Comparing ${models.length} models for prompt:`));
+    console.log(chalk.gray(`  "${argv.prompt.slice(0, 80)}${argv.prompt.length > 80 ? '...' : ''}"\n`));
+
+    const ids = [];
+    for (const model of models) {
+      const id = addTask({
+        prompt: argv.prompt,
+        workdir: argv.workdir,
+        priority: argv.priority,
+        maxRefinements: argv.maxRefinements ?? 0,
+        timeout: argv.timeout ? argv.timeout * 1000 : config.taskTimeoutMs,
+        model,
+        tags: ['compare'],
+      });
+      ids.push({ model, id });
+      console.log(chalk.green(`  ✓ ${chalk.bold(model.padEnd(22))} → task ${id}`));
+    }
+
+    console.log(chalk.gray(`\n  Run the orchestrator with: node src/cli.js start`));
+    console.log(chalk.gray(`  Check results with:        node src/cli.js show <id>\n`));
   })
   .command('memory', 'Memory operations', (yargs) => {
     return yargs

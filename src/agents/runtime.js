@@ -253,6 +253,7 @@ export function createAgentRuntime(runtimeConfig = config) {
         timeout: taskDef.timeout ?? runtimeConfig.taskTimeoutMs,
         tags: taskDef.tags || [],
         copilotArgs: taskDef.copilotArgs || [],
+        model: taskDef.model || null,
         id: taskDef.id || null,
         parentTaskId: taskDef.parentTaskId || null,
         originalPrompt: taskDef.originalPrompt || null,

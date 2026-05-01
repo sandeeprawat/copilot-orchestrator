@@ -48,6 +48,7 @@ node src/cli.js show <task-id>
 |---------|-------------|
 | `start` | Start the orchestrator daemon |
 | `add <prompt>` | Add a single task |
+| `compare <prompt>` | Run a prompt across multiple models and compare results |
 | `import <file>` | Import tasks from a JSON file |
 | `list` | List all tasks |
 | `status` | Show queue statistics |
@@ -61,7 +62,26 @@ node src/cli.js show <task-id>
 | `--priority, -p` | Priority (1 = highest, default: 5) |
 | `--max-refinements, -r` | Max self-improvement iterations |
 | `--timeout, -t` | Timeout in seconds |
+| `--model, -m` | Model to use (e.g. `gpt-5.5`, `claude-opus-4.7`, `claude-opus-4.6`) |
 | `--id` | Custom task ID |
+
+### Options for `compare`
+
+| Option | Description |
+|--------|-------------|
+| `--models` | Comma-separated models to compare (default: `gpt-5.5,claude-opus-4.7,claude-opus-4.6`) |
+| `--workdir, -w` | Working directory |
+| `--priority, -p` | Priority (1 = highest, default: 5) |
+| `--max-refinements, -r` | Max self-improvement iterations (default: 0) |
+| `--timeout, -t` | Timeout in seconds |
+
+```bash
+# Compare GPT-5.5, Claude Opus 4.7, and Claude Opus 4.6 on the same prompt
+node src/cli.js compare "Explain the CAP theorem in 3 sentences"
+
+# Compare a custom set of models
+node src/cli.js compare "Write a binary search in Python" --models gpt-5.5,claude-opus-4.7
+```
 
 ### Options for `start`
 
@@ -80,6 +100,7 @@ Drop files into the `tasks/` directory — they'll be auto-detected and queued:
     "id": "optional-custom-id",
     "prompt": "Create a REST API in Express that...",
     "workdir": "Q:\\src\\my-project",
+    "model": "gpt-5.5",
     "maxRefinements": 3,
     "timeout": 300000,
     "priority": 1,
@@ -87,6 +108,23 @@ Drop files into the `tasks/` directory — they'll be auto-detected and queued:
     "copilotArgs": ["--add-dir", "Q:\\src\\shared"]
   }
 ]
+```
+
+The `model` field is optional. When omitted the copilot CLI uses its default model.
+
+## Model Comparison
+
+The `compare` command submits one task per model with the same prompt and the `compare` tag. All tasks run concurrently (subject to `maxConcurrency`) and can be inspected individually with `show <id>`.
+
+```bash
+# Submit comparison tasks
+node src/cli.js compare "Write a Python quicksort"
+
+# After the orchestrator finishes, review each model's output
+node src/cli.js list --status completed
+node src/cli.js show <id-for-gpt-5.5>
+node src/cli.js show <id-for-claude-opus-4.7>
+node src/cli.js show <id-for-claude-opus-4.6>
 ```
 
 ## Self-Improvement

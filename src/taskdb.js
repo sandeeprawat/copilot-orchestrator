@@ -29,6 +29,7 @@ export function initDB() {
       timeout_ms INTEGER DEFAULT ${config.taskTimeoutMs},
       tags TEXT DEFAULT '[]',
       copilot_args TEXT DEFAULT '[]',
+      model TEXT,
       score REAL,
       evaluation TEXT,
       session_file TEXT,
@@ -43,6 +44,13 @@ export function initDB() {
     CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at);
   `);
 
+  // Migrate existing databases that don't have the model column
+  try {
+    db.exec(`ALTER TABLE tasks ADD COLUMN model TEXT`);
+  } catch {
+    // Column already exists — no-op
+  }
+
   logger.info(COMPONENT, `Database initialized at ${config.dbPath}`);
   return db;
 }
@@ -55,17 +63,18 @@ export function addTask({
   timeout = config.taskTimeoutMs,
   tags = [],
   copilotArgs = [],
+  model = null,
   parentTaskId = null,
   originalPrompt = null,
   id = null,
 }) {
   const taskId = id || uuidv4().slice(0, 8);
   db.prepare(`
-    INSERT INTO tasks (id, prompt, workdir, priority, max_refinements, timeout_ms, tags, copilot_args, parent_task_id, original_prompt)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO tasks (id, prompt, workdir, priority, max_refinements, timeout_ms, tags, copilot_args, model, parent_task_id, original_prompt)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     taskId, prompt, workdir, priority, maxRefinements, timeout,
-    JSON.stringify(tags), JSON.stringify(copilotArgs),
+    JSON.stringify(tags), JSON.stringify(copilotArgs), model,
     parentTaskId, originalPrompt || prompt
   );
   logger.info(COMPONENT, `Task added: ${taskId} — "${prompt.slice(0, 80)}..."`, taskId);
@@ -122,6 +131,7 @@ export function requeueForRefinement(taskId, newPrompt) {
     timeout: task.timeout_ms,
     tags: JSON.parse(task.tags),
     copilotArgs: JSON.parse(task.copilot_args),
+    model: task.model || null,
     parentTaskId: taskId,
     originalPrompt: task.original_prompt,
   });
